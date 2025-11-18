@@ -1,30 +1,27 @@
-import express from "express";
-import cors from "cors";
 import pkg from "@prisma/client";
 const { PrismaClient } = pkg;
 
-const prisma = new PrismaClient();
-const app = express();
+import express from "express";
+import cors from "cors";
 
-app.use(cors());
+const app = express();
 app.use(express.json());
+app.use(cors());
+
+const prisma = new PrismaClient();
 
 app.post("/submit", async (req, res) => {
   try {
     const { name, email } = req.body;
 
-    if (!name || !email) {
-      return res.status(400).json({ error: "Name and email are required" });
-    }
-
-    const submission = await prisma.submissions.create({
-      data: { name, email },
+    const record = await prisma.submissions.create({
+      data: { name, email }
     });
 
-    return res.json({ success: true, submission });
+    return res.json({ success: true, record });
   } catch (err) {
-    console.error("Backend error:", err);
-    return res.status(500).json({ error: "Internal Server Error" });
+    console.error("ERROR:", err);
+    res.status(500).json({ error: true });
   }
 });
 
