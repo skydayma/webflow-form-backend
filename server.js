@@ -1,27 +1,35 @@
-import pkg from "@prisma/client";
-const { PrismaClient } = pkg;
-
 import express from "express";
 import cors from "cors";
-
-const app = express();
-app.use(express.json());
-app.use(cors());
+import pkg from '@prisma/client';
+const { PrismaClient } = pkg;
 
 const prisma = new PrismaClient();
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Convert BigInt to string
+function convertBigInt(obj) {
+  return JSON.parse(JSON.stringify(obj, (_, value) =>
+    typeof value === "bigint" ? value.toString() : value
+  ));
+}
 
 app.post("/submit", async (req, res) => {
   try {
     const { name, email } = req.body;
 
-    const record = await prisma.submissions.create({
-      data: { name, email }
+    const submission = await prisma.submissions.create({
+      data: { name, email },
     });
 
-    return res.json({ success: true, record });
+    // Fix BigInt error
+    const safeSubmission = convertBigInt(submission);
+    res.json({ success: true, data: safeSubmission });
+
   } catch (err) {
     console.error("ERROR:", err);
-    res.status(500).json({ error: true });
+    res.status(500).json({ error: "Server error", details: err.message });
   }
 });
 
