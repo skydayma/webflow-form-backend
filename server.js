@@ -14,7 +14,7 @@ const app = express();
 /* ====== CORS CONFIG ====== */
 // put your real Webflow published domain here:
 const ALLOWED_ORIGIN =
-  process.env.ALLOWED_ORIGIN || "https://continuousintelligence-3-51707a2b60b8d.webflow.io";
+  process.env.ALLOWED_ORIGIN || "https://continuous-intelligence-3-51707a2b60b8d.webflow.io";
 
 app.use(
   cors({
