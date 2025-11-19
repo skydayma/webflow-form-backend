@@ -11,5 +11,14 @@ model submissions {
   id         BigInt    @id @default(autoincrement())
   name       String?
   email      String?
+  slug       String?   // which PDF was requested
   created_at DateTime? @default(now()) @db.Timestamptz(6)
+}
+
+model pdfs {
+  id         Int       @id @default(autoincrement())
+  slug       String    @unique   // e.g. "ctm-whitepaper"
+  title      String?
+  pdf_url    String    // Webflow CDN URL
+  created_at DateTime  @default(now())
 }
