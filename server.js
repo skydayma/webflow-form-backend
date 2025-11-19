@@ -1,21 +1,52 @@
 // server.js
 
-import 'dotenv/config';
 import express from "express";
 import cors from "cors";
 import pkg from "@prisma/client";
 import dns from "dns/promises";
 import nodemailer from "nodemailer";
+import net from "net";   // <-- added for SMTP connection test
 
+// PRISMA
 const { PrismaClient } = pkg;
 const prisma = new PrismaClient();
 
 const app = express();
 
-/* ====== CORS CONFIG ====== */
-// put your real Webflow published domain here:
+
+// ======================================================
+// 1) QUICK SMTP CONNECTION TEST (NO IMPACT ON APP)
+// ======================================================
+
+function testSMTPConnection() {
+  console.log("\n=== SMTP CONNECTION TEST START ===");
+
+  const socket = net.createConnection(587, "smtp.office365.com", () => {
+    console.log("✅ SUCCESS: Able to CONNECT to smtp.office365.com:587");
+    console.log("This means port 587 is OPEN.\n");
+    socket.end();
+  });
+
+  socket.on("error", (err) => {
+    console.log("❌ FAILED: Cannot connect to smtp.office365.com:587");
+    console.log("Error:", err.code || err.message);
+    console.log("This means Railway is BLOCKING outbound SMTP.\n");
+  });
+
+  socket.setTimeout(4000, () => {
+    console.log("⏳ TIMEOUT: SMTP connection timed out (likely blocked by Railway).");
+    socket.destroy();
+  });
+}
+
+testSMTPConnection();
+// ======================================================
+
+
+// CORS CONFIG
 const ALLOWED_ORIGIN =
-  process.env.ALLOWED_ORIGIN || "https://continuous-intelligence-3-51707a2b60b8d.webflow.io";
+  process.env.ALLOWED_ORIGIN ||
+  "https://continuousintelligence-3-51707a2b60b8d.webflow.io";
 
 app.use(
   cors({
@@ -27,16 +58,15 @@ app.use(
 
 app.use(express.json());
 
-/* ====== HELPERS ====== */
 
-// basic email format check
+// EMAIL FORMAT CHECK
 function isValidEmailFormat(email) {
-  if (!email) return false;
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return re.test(email);
 }
 
-// block common personal email providers
+
+// BLOCK PERSONAL EMAILS
 const personalDomains = new Set([
   "gmail.com",
   "yahoo.com",
@@ -50,138 +80,94 @@ const personalDomains = new Set([
   "protonmail.com",
 ]);
 
-// MX record validation for corporate domains
+
+// MX CHECK
 async function hasValidMx(domain) {
   try {
     const records = await dns.resolveMx(domain);
-    return Array.isArray(records) && records.length > 0;
+    return records && records.length > 0;
   } catch (err) {
-    console.error("MX lookup error for domain:", domain, err.message);
+    console.log("MX LOOKUP FAILED:", domain, err.message);
     return false;
   }
 }
 
-/* ====== SMTP (OUTLOOK) SETUP ====== */
 
+// SMTP TRANSPORTER (Outlook 365)
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp.office365.com",
   port: Number(process.env.SMTP_PORT) || 587,
-  secure: false, // STARTTLS
+  secure: false,
   auth: {
-    user: process.env.SMTP_USER, // e.g. no-reply@yourcompany.com
-    pass: process.env.SMTP_PASS, // app password
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
   },
 });
 
-/* ====== MAIN ENDPOINT: POST /submit ====== */
 
+// ======================================================
+// MAIN API: POST /submit
+// ======================================================
 app.post("/submit", async (req, res) => {
   try {
-    const { name, email, slug } = req.body || {};
+    const { name, email, slug } = req.body;
     console.log("Incoming /submit:", { name, email, slug });
 
-    // Step 1: basic field validation
     if (!name || !email || !slug) {
-      return res.status(400).json({
-        success: false,
-        error: "Missing required fields",
-      });
+      return res.status(400).json({ success: false, error: "Missing fields" });
     }
 
     if (!isValidEmailFormat(email)) {
+      return res.status(400).json({ success: false, error: "Invalid email" });
+    }
+
+    const domain = email.split("@")[1].toLowerCase();
+    if (personalDomains.has(domain)) {
       return res.status(400).json({
         success: false,
-        error: "Invalid email format",
+        error: "Personal emails not allowed",
       });
     }
 
-    // Step 2: block personal domains
-    const [, domain] = email.split("@");
-    if (!domain) {
+    const mxOK = await hasValidMx(domain);
+    if (!mxOK) {
       return res.status(400).json({
         success: false,
-        error: "Invalid email domain",
+        error: "Invalid corporate domain",
       });
     }
 
-    const lowerDomain = domain.toLowerCase();
-    if (personalDomains.has(lowerDomain)) {
-      return res.status(400).json({
-        success: false,
-        error: "Personal email domains are not allowed",
-        reason: "blocked_personal_domain",
-      });
-    }
-
-    // Step 3: MX check (corporate domain must be able to receive mail)
-    const mxOk = await hasValidMx(lowerDomain);
-    if (!mxOk) {
-      return res.status(400).json({
-        success: false,
-        error: "Email domain cannot receive messages",
-        reason: "invalid_mx",
-      });
-    }
-
-    // Step 4: lookup PDF by slug
-    const pdf = await prisma.pdfs.findUnique({
-      where: { slug },
-    });
-
+    // Fetch PDF by slug
+    const pdf = await prisma.pdfs.findUnique({ where: { slug } });
     if (!pdf) {
-      return res.status(404).json({
-        success: false,
-        error: "Requested document not found",
-        reason: "unknown_slug",
-      });
+      return res.status(404).json({ success: false, error: "PDF not found" });
     }
 
-    // Step 5: store submission
-    await prisma.submissions.create({
-      data: {
-        name,
-        email,
-        slug,
-      },
-    });
+    // Save submission
+    await prisma.submissions.create({ data: { name, email, slug } });
 
-    // Step 6: send email with PDF link
-    const subject = `Your requested document: ${pdf.title || "Download"}`;
-    const htmlBody = `
-      <p>Hi ${name || ""},</p>
-      <p>Thank you for your interest.</p>
-      <p>You can download your requested document using the link below:</p>
-      <p><a href="${pdf.pdf_url}" target="_blank" rel="noopener noreferrer">
-        ${pdf.title || "Download PDF"}
-      </a></p>
-      <p>If you did not request this document, you can safely ignore this email.</p>
-      <p>Best regards,<br/>Team Continuous Intelligence</p>
-    `;
-
+    // Send email
     await transporter.sendMail({
       from: process.env.SMTP_USER,
       to: email,
-      subject,
-      html: htmlBody,
+      subject: `Your requested document: ${pdf.title}`,
+      html: `
+        <p>Hi ${name},</p>
+        <p>Your document is ready:</p>
+        <a href="${pdf.pdf_url}">${pdf.title}</a>
+      `,
     });
 
-    // Step 7: respond to Webflow
-    return res.json({
-      success: true,
-      message: "Submission stored and email sent",
-    });
+    return res.json({ success: true });
   } catch (err) {
-    console.error("ERROR in /submit:", err);
-    return res.status(500).json({
-      success: false,
-      error: "Server error",
-    });
+    console.log("ERROR in /submit:", err);
+    return res.status(500).json({ success: false, error: "Server error" });
   }
 });
 
-/* ====== START SERVER ====== */
 
+// START SERVER
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`\n🚀 Server running on port ${PORT}`);
 });
