@@ -2,10 +2,10 @@
   "name": "webflowprismabackend",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "build": "prisma generate",
-    "start": "node server.js"
+    "start": "prisma generate && prisma db push && node server.js"
   },
   "keywords": [],
   "author": "",
